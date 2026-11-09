@@ -86,3 +86,26 @@ test('chooseCompression can be forced', () => {
   assert.equal(archive.chooseCompression({ HELM_CACHE_COMPRESSION: 'gzip', PATH: process.env.PATH }), 'gzip');
   assert.equal(archive.chooseCompression({ PATH: '' }), 'gzip');
 });
+
+// bsdtar stops reading at the end-of-archive marker, so a large zero
+// padding after it makes the writer see EPIPE. That must not count as a
+// failure.
+for (const compression of ['gzip', 'zstd']) {
+  test(`a ${compression} archive with long padding after its end marker extracts`, { skip: compression === 'zstd' && !archive.findProgram('zstd') }, async (t) => {
+    const { workspace, tempDir } = layout(t);
+    const { execFileSync } = require('node:child_process');
+    const tarFile = path.join(tempDir, 'padded.tar');
+    execFileSync('tar', ['-c', '-b', '2048', '-f', tarFile, '-C', workspace, 'Pods']);
+    const file = path.join(tempDir, 'cache.archive');
+    if (compression === 'gzip') {
+      fs.writeFileSync(file, require('node:zlib').gzipSync(fs.readFileSync(tarFile)));
+    } else {
+      execFileSync('zstd', ['-q', '-o', file, tarFile]);
+    }
+    fs.rmSync(path.join(workspace, 'Pods'), { recursive: true });
+    for (let i = 0; i < 5; i++) {
+      await archive.extractArchive({ file, workspace });
+    }
+    assert.equal(fs.readFileSync(path.join(workspace, 'Pods', 'A', 'a.txt'), 'utf8'), 'pod');
+  });
+}

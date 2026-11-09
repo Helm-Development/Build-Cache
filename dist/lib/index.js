@@ -60542,15 +60542,16 @@ async function extractArchive({ file, workspace, env = process.env }) {
   if (!tarResult) {
     throw results[2].reason;
   }
-  if (zResult && zResult.code !== 0) {
-    throw new Error(`zstd failed with exit code ${zResult.code}: ${zResult.stderr.trim()}`);
-  }
   if (tarResult.code !== 0) {
-    throw new Error(`tar failed with exit code ${tarResult.code}: ${tarResult.stderr.trim()}`);
+    const z = zResult && zResult.code !== 0 && zResult.stderr.trim() ? ` (zstd: ${zResult.stderr.trim()})` : '';
+    const feedError = results[0].status === 'rejected' ? ` (reading the archive: ${results[0].reason.message})` : '';
+    throw new Error(`tar failed with exit code ${tarResult.code}: ${tarResult.stderr.trim()}${z}${feedError}`);
   }
-  if (results[0].status === 'rejected') {
-    throw new Error(`the archive could not be read: ${results[0].reason.message}`);
-  }
+  // tar succeeded, so it read a complete archive up to its end marker. The
+  // macOS tar (bsdtar) stops reading there and closes its input before the
+  // zero padding that follows, so writing the rest can fail with EPIPE and
+  // zstd can stop early. Neither matters: the archive's SHA-256 digest was
+  // checked before extraction, and a truncated archive makes tar fail.
   return { compression };
 }
 
