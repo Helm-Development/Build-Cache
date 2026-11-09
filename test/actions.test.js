@@ -58,7 +58,7 @@ test('a miss, then the post step saves, then the next run restores the exact key
 
   s.wipe();
   const io2 = fakeIO(inputs);
-  assert.equal((await restore({ io: io2, env: s.env, clientOptions })).result, 'exact');
+  assert.equal((await restore({ io: io2, env: s.env, clientOptions })).result, 'exact', io2.all());
   assert.equal(io2.log.outputs['cache-hit'], 'true');
   assert.equal(io2.log.outputs['cache-matched-key'], 'deps-abc');
   assert.ok(s.restored());
