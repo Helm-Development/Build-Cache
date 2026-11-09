@@ -1,0 +1,75 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    name: Unit tests (${{ matrix.os }}, Node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        node: ['20', '24']
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm ci
+      - run: npm test
+
+  dist:
+    name: dist/ matches the source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+      - run: npm ci
+      - run: npm run build
+      - name: Fail when dist/ is out of date
+        run: |
+          if [ -n "$(git status --porcelain dist)" ]; then
+            git status --porcelain dist
+            echo "::error::dist/ is out of date. Run npm run build and commit dist/."
+            exit 1
+          fi
+
+  without-helm:
+    # On a GitHub-hosted runner HELM_CACHE_URL and HELM_CACHE_TOKEN are not
+    # set, so every step must log a notice and succeed without doing
+    # anything.
+    name: Runs as a no-op without the Helm cache (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v5
+      - run: mkdir -p cached && echo hello > cached/file.txt
+      - id: cache
+        uses: ./
+        with:
+          path: cached
+          key: self-test-${{ runner.os }}-${{ github.sha }}
+          restore-keys: self-test-${{ runner.os }}-
+      - name: cache-hit is "false"
+        run: test "${{ steps.cache.outputs.cache-hit }}" = "false"
+      - id: restore
+        uses: ./restore
+        with:
+          path: cached
+          key: self-test-${{ runner.os }}-${{ github.sha }}
+      - uses: ./save
+        with:
+          path: cached
+          key: ${{ steps.restore.outputs.cache-primary-key }}

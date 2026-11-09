@@ -1,0 +1,37 @@
+name: Helm Build Cache
+description: Restore and save build caches through the Helm build cache service, with the same inputs as actions/cache.
+author: Helm
+inputs:
+  path:
+    description: Files, directories and wildcard patterns to cache and restore, one per line. "~" is the home directory, and a line starting with "!" excludes what it matches.
+    required: true
+  key:
+    description: The key the cache is saved under and looked up by first. 1 to 512 bytes, with no control characters.
+    required: true
+  restore-keys:
+    description: Prefixes to try, in order, when nothing is saved under the exact key, one per line. The newest entry whose key starts with the prefix is restored. At most 20.
+    required: false
+    default: ''
+  fail-on-cache-miss:
+    description: Fail the step when no entry is found for the key or any restore key.
+    required: false
+    default: 'false'
+  lookup-only:
+    description: Only check whether an entry exists; do not download it.
+    required: false
+    default: 'false'
+outputs:
+  cache-hit:
+    description: '"true" when an entry was found for the exact key, otherwise "false".'
+  cache-primary-key:
+    description: The key input.
+  cache-matched-key:
+    description: The key of the entry that was restored, which may come from a restore key. Empty on a miss.
+runs:
+  using: node24
+  main: dist/restore/index.js
+  post: dist/save/index.js
+  post-if: success()
+branding:
+  icon: archive
+  color: blue

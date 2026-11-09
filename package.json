@@ -1,0 +1,23 @@
+{
+  "name": "helm-build-cache",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Save and restore build caches on Helm build machines, with the same inputs as actions/cache.",
+  "license": "UNLICENSED",
+  "main": "src/index.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "node scripts/build.js",
+    "test": "node --test test/*.test.js",
+    "test:integration": "node --test test/integration/*.test.js"
+  },
+  "dependencies": {
+    "@actions/core": "2.0.3",
+    "@actions/glob": "0.5.0"
+  },
+  "devDependencies": {
+    "@vercel/ncc": "0.38.4"
+  }
+}

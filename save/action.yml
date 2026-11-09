@@ -1,0 +1,16 @@
+name: Helm Build Cache save
+description: Save a build cache through the Helm build cache service, like actions/cache/save.
+author: Helm
+inputs:
+  path:
+    description: Files, directories and wildcard patterns to cache, one per line.
+    required: true
+  key:
+    description: The key to save under. 1 to 512 bytes, with no control characters. An existing entry with this key on this branch is never replaced.
+    required: true
+runs:
+  using: node24
+  main: ../dist/save-only/index.js
+branding:
+  icon: archive
+  color: blue
