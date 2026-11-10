@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { restore, save, State, NOT_CONFIGURED } = require('../src/actions');
+const archive = require('../src/archive');
 const { startMockService } = require('./helpers/mock-service');
 const { fakeIO } = require('./helpers/fake-io');
 
@@ -64,8 +65,10 @@ test('a miss, then the post step saves, then the next run restores the exact key
   assert.ok(s.restored());
 
   const post2 = fakeIO(inputs, io2.log.state);
+  const before = s.svc.requests.length;
   assert.equal((await save({ mode: 'post', io: post2, env: s.env, clientOptions })).result, 'skipped');
   assert.match(post2.all(), /exact key/);
+  assert.equal(s.svc.requests.length, before, 'after an exact restore the post step sends no request at all');
 });
 
 test('a restore key restores the newest match from the default branch, and cache-hit is false', async (t) => {
@@ -198,7 +201,94 @@ test('paths that do not exist save nothing', async (t) => {
   const s = await setup(t);
   const io = fakeIO({ path: 'nothing-here', key: 'k' });
   assert.equal((await save({ mode: 'save-only', io, env: s.env, clientOptions })).result, 'no-files');
-  assert.equal(s.svc.requests.length, 0);
+  assert.deepEqual(s.svc.requests.map((r) => r.method), ['POST'], 'only the key check, no upload');
+});
+
+// countArchives replaces archive.createArchive with a wrapper that counts
+// its calls, and restores it when the test ends. onCreate runs before the
+// real function.
+function countArchives(t, onCreate = () => {}) {
+  const real = archive.createArchive;
+  const calls = { n: 0 };
+  archive.createArchive = async (...args) => {
+    calls.n++;
+    await onCreate();
+    return real(...args);
+  };
+  t.after(() => { archive.createArchive = real; });
+  return calls;
+}
+
+test('the save sub-action checks the key first and packs nothing when it exists', async (t) => {
+  const s = await setup(t);
+  await save({ mode: 'save-only', io: fakeIO({ path: s.paths, key: 'k' }), env: s.env, clientOptions });
+  const calls = countArchives(t);
+  const before = s.svc.requests.length;
+
+  const io = fakeIO({ path: s.paths, key: 'k' });
+  const result = await save({ mode: 'save-only', io, env: s.env, clientOptions });
+  assert.equal(result.result, 'exists');
+  assert.equal(calls.n, 0, 'no archive is made');
+  const sent = s.svc.requests.slice(before);
+  assert.deepEqual(sent.map((r) => `${r.method} ${r.path}`), ['POST /v1/cache/lookup']);
+  assert.deepEqual(JSON.parse(sent[0].body.toString()).restore_keys, [], 'the check asks for the exact key only');
+  assert.match(io.all(), /An entry with the key k already exists \(saved on branch feature\/x\); nothing to pack\./);
+  assert.deepEqual(io.log.warning, []);
+  assert.deepEqual(io.log.failed, []);
+});
+
+test('the post step checks the key first when another job saved it after this job\'s restore', async (t) => {
+  const s = await setup(t);
+  const inputs = { path: s.paths, key: 'deps-abc', 'restore-keys': 'deps-' };
+  const io = fakeIO(inputs);
+  assert.equal((await restore({ io, env: s.env, clientOptions })).result, 'miss');
+
+  // A second job with the same key saves first.
+  await save({ mode: 'save-only', io: fakeIO({ path: s.paths, key: 'deps-abc' }), env: s.env, clientOptions });
+  const calls = countArchives(t);
+
+  const post = fakeIO(inputs, io.log.state);
+  assert.equal((await save({ mode: 'post', io: post, env: s.env, clientOptions })).result, 'exists');
+  assert.equal(calls.n, 0, 'no archive is made');
+  assert.match(post.all(), /already exists .*nothing to pack/);
+  assert.equal(s.svc.requests.filter((r) => r.method === 'PUT').length, 1, 'only the other job uploaded');
+});
+
+test('an exact entry on the default branch also counts as existing', async (t) => {
+  const s = await setup(t);
+  s.svc.addEntry('main', 'k', Buffer.from('from main'));
+  const calls = countArchives(t);
+  const io = fakeIO({ path: s.paths, key: 'k' });
+  assert.equal((await save({ mode: 'save-only', io, env: s.env, clientOptions })).result, 'exists');
+  assert.equal(calls.n, 0);
+  assert.match(io.all(), /saved on branch main\); nothing to pack/);
+});
+
+test('a restore-key match does not stop the save', async (t) => {
+  const s = await setup(t);
+  s.svc.addEntry('feature/x', 'deps-old', Buffer.from('old'));
+  const io = fakeIO({ path: s.paths, key: 'deps-new' });
+  assert.equal((await save({ mode: 'save-only', io, env: s.env, clientOptions })).result, 'saved', io.all());
+});
+
+test('when the key check fails, the cache is packed and saved as before', async (t) => {
+  const s = await setup(t);
+  s.svc.fail('POST', '/v1/cache/lookup', 500, { error: 'store_error', message: 'busy' });
+  const calls = countArchives(t);
+  const io = fakeIO({ path: s.paths, key: 'k' });
+  assert.equal((await save({ mode: 'save-only', io, env: s.env, clientOptions })).result, 'saved', io.all());
+  assert.equal(calls.n, 1);
+  assert.match(io.all(), /could not check whether the key k already exists/);
+  assert.deepEqual(io.log.warning, []);
+});
+
+test('a 409 after packing, when another job saved in between, is still not a failure', async (t) => {
+  const s = await setup(t);
+  countArchives(t, () => { s.svc.addEntry('feature/x', 'k', Buffer.from('other job')); });
+  const io = fakeIO({ path: s.paths, key: 'k' });
+  assert.equal((await save({ mode: 'save-only', io, env: s.env, clientOptions })).result, 'exists');
+  assert.match(io.all(), /already exists on branch feature\/x\. Entries are never replaced/);
+  assert.deepEqual(io.log.warning, []);
 });
 
 test('the post step without a recorded key does nothing', async (t) => {

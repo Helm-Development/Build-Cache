@@ -50,6 +50,16 @@ digest, and unpacks it. A post step at the end of the job (only when the job
 succeeded) saves the paths under `key`, unless the main step restored an
 entry with exactly that key.
 
+Before it packs anything, every save (the post step and
+`Helm-Development/Build-Cache/save`) asks the service whether an entry with
+exactly that key already exists on the job's branch or the default branch.
+If one does, the step logs "An entry with the key … already exists (saved
+on branch …); nothing to pack" and stops, so it spends no time making an
+archive the service would refuse. This matters when two jobs miss the same
+key: the job that reaches its save after the other has saved skips it in
+about a second instead of packing the whole cache first. If the check itself fails, the
+step packs and saves as before. (Since v1.1.0.)
+
 Entries are `tar` archives compressed with `zstd` when the `zstd` program is
 installed, and with gzip otherwise. Paths are stored relative to the
 workspace, as `actions/cache` stores them.

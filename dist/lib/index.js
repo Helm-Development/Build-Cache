@@ -60262,6 +60262,25 @@ async function save({ mode = 'post', io = defaultIO(), env = process.env, client
       return { result: 'skipped' };
     }
 
+    const client = new CacheClient({ url: svc.url, token: svc.token, ...clientOptions });
+
+    // Ask for the exact key before packing anything. The service never
+    // replaces an entry, so packing an archive for a key that already exists
+    // is wasted work (16.5 s for a 4.1 GB Swift package cache, measured on
+    // a real iOS job). The lookup searches this branch and then the default
+    // branch, the same entries a restore with this key would find. If the
+    // lookup fails, the archive is made and saved as before.
+    try {
+      const answer = await client.lookup({ repository: scope.repository, branch: scope.branch, key, restoreKeys: [] });
+      if (answer.hit && answer.exact && answer.entry && answer.entry.key === key) {
+        io.info(`An entry with the key ${key} already exists (saved on branch ${answer.entry.branch || scope.branch}); nothing to pack.`);
+        return { result: 'exists', entry: answer.entry };
+      }
+    } catch (err) {
+      io.info(`The action could not check whether the key ${key} already exists, so it packs and saves the cache as usual. ` +
+        describe(err, { url: svc.url, repository: scope.repository, branch: scope.branch }));
+    }
+
     const workspace = config.workspaceDir(env);
     const { relPaths, recursive } = await archive.resolvePaths(patterns, workspace);
     if (relPaths.length === 0) {
@@ -60269,7 +60288,6 @@ async function save({ mode = 'post', io = defaultIO(), env = process.env, client
       return { result: 'no-files' };
     }
 
-    const client = new CacheClient({ url: svc.url, token: svc.token, ...clientOptions });
     const tempDir = makeTempDir(env);
     try {
       const file = path.join(tempDir, 'cache.archive');
